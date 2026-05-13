@@ -887,6 +887,10 @@ namespace video {
   };
 #endif
 
+  static const auto aq_strength_lambda = std::function<const std::string(const config_t &)>([](const config_t &) {
+    return std::to_string(config::video.sw.aq_strength);
+  });
+
   encoder_t software {
     "software"sv,
     std::make_unique<encoder_platform_formats_avcodec>(
@@ -907,6 +911,7 @@ namespace video {
       {
         {"svtav1-params"s, "keyint=-1:pred-struct=1:force-key-frames=1:mbr=0"s},
         {"preset"s, &config::video.sw.svtav1_preset},
+        {"aq-mode"s, &config::video.sw.aq_mode},
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
@@ -933,6 +938,8 @@ namespace video {
         {"x265-params"s, "info=0:keyint=-1"s},
         {"preset"s, &config::video.sw.sw_preset},
         {"tune"s, &config::video.sw.sw_tune},
+        {"aq-mode"s, &config::video.sw.aq_mode},
+        {"aq-strength"s, aq_strength_lambda},
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
@@ -946,6 +953,8 @@ namespace video {
       {
         {"preset"s, &config::video.sw.sw_preset},
         {"tune"s, &config::video.sw.sw_tune},
+        {"aq-mode"s, &config::video.sw.aq_mode},
+        {"aq-strength"s, aq_strength_lambda},
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
