@@ -880,7 +880,7 @@ namespace pipewire {
     std::unique_ptr<platf::avcodec_encode_device_t> make_avcodec_encode_device(platf::pix_fmt_e pix_fmt) override {
 #ifdef SUNSHINE_BUILD_VAAPI
       if (mem_type == platf::mem_type_e::vaapi) {
-        return va::make_avcodec_encode_device(width, height, n_dmabuf_infos > 0);
+        return va::make_avcodec_encode_device(width, height, 0);
       }
 #endif
 
