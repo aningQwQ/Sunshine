@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import PlatformLayout from '../../PlatformLayout.vue'
 
 const props = defineProps([
@@ -9,6 +9,37 @@ const props = defineProps([
 ])
 
 const config = ref(props.config)
+
+// Known built-in encoder display names
+const builtin_labels = {
+  'nvenc': 'NVIDIA NVENC',
+  'quicksync': 'Intel QuickSync',
+  'amdvce': 'AMD AMF/VCE',
+  'mediafoundation': 'Media Foundation',
+  'vaapi': 'VA-API',
+  'vulkan': 'Vulkan',
+  'videotoolbox': 'VideoToolbox',
+  'software': 'Software'
+}
+
+// Compute extra encoder options beyond platform's built-in list
+const extraEncoderOptions = computed(() => {
+  if (!config.value?.encoder_options) return []
+
+  // Determine which builtins belong to this platform
+  const platformBuiltins = {
+    windows: ['nvenc', 'quicksync', 'amdvce', 'mediafoundation'],
+    linux: ['nvenc', 'vaapi', 'vulkan'],
+    freebsd: ['vulkan', 'vaapi'],
+    macos: ['videotoolbox']
+  }
+  const known = platformBuiltins[props.platform] || []
+  known.push('software')
+
+  return config.value.encoder_options.filter(
+    name => name !== '' && !known.includes(name)
+  )
+})
 </script>
 
 <template>
@@ -91,6 +122,7 @@ const config = ref(props.config)
       <label for="encoder" class="form-label">{{ $t('config.encoder') }}</label>
       <select id="encoder" class="form-select" v-model="config.encoder">
         <option value="">{{ $t('_common.autodetect') }}</option>
+        <!-- Built-in platform-specific encoders -->
         <PlatformLayout :platform="platform">
           <template #windows>
             <option value="nvenc">NVIDIA NVENC</option>
@@ -111,6 +143,11 @@ const config = ref(props.config)
           </template>
         </PlatformLayout>
         <option value="software">{{ $t('config.encoder_software') }}</option>
+        <!-- Dynamically discovered encoders (GStreamer etc.) -->
+        <template v-if="extraEncoderOptions.length > 0">
+          <option disabled style="font-weight: bold; background: var(--bs-gray-700); color: var(--bs-gray-300);">— GStreamer Encoders —</option>
+          <option v-for="enc in extraEncoderOptions" :key="enc" :value="enc">{{ enc }}</option>
+        </template>
       </select>
       <div class="form-text">{{ $t('config.encoder_desc') }}</div>
     </div>

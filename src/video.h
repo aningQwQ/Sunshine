@@ -370,6 +370,11 @@ namespace video {
    */
   int probe_encoders();
 
+/**
+ * @brief Get the list of built-in encoder names (for frontend display).
+ */
+const std::vector<std::string_view> &get_builtin_encoder_names();
+
   // Several NTSC standard refresh rates are hardcoded here, because their
   // true rate requires a denominator of 1001. ffmpeg's av_d2q() would assume it could
   // reduce 29.97 to 2997/100 but this would be slightly wrong. We also include

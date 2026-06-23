@@ -44,6 +44,11 @@
 #include "rtsp.h"
 #include "utility.h"
 #include "uuid.h"
+#include "video.h"
+
+#ifdef SUNSHINE_BUILD_GST
+#include "gst_encoder.h"
+#endif
 
 using namespace std::literals;
 
@@ -1000,6 +1005,22 @@ namespace confighttp {
     for (auto &[name, value] : vars) {
       output_tree[name] = std::move(value);
     }
+
+    // Build list of available encoder options for the frontend
+    auto encoder_options = nlohmann::json::array();
+    encoder_options.push_back("");  // autodetect
+    for (auto name : video::get_builtin_encoder_names()) {
+      encoder_options.push_back(std::string(name));
+    }
+#ifdef SUNSHINE_BUILD_GST
+    {
+      auto gst_ptrs = video::register_gst_encoders();
+      for (auto *enc : gst_ptrs) {
+        encoder_options.push_back(std::string(enc->name));
+      }
+    }
+#endif
+    output_tree["encoder_options"] = encoder_options;
 
     send_response(response, output_tree);
   }

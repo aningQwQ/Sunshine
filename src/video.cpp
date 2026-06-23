@@ -1185,6 +1185,17 @@ namespace video {
   };
 
   static encoder_t *chosen_encoder;
+
+  const std::vector<std::string_view> &get_builtin_encoder_names() {
+    static std::vector<std::string_view> names;
+    if (names.empty()) {
+      for (auto *enc : encoders) {
+        names.push_back(enc->name);
+      }
+    }
+    return names;
+  }
+
   int active_hevc_mode;
   int active_av1_mode;
   bool last_encoder_probe_supported_ref_frames_invalidation = false;
