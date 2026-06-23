@@ -324,6 +324,23 @@ if (${SUNSHINE_BUILD_FLATPAK})
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_BUILD_FLATPAK=1)
 endif ()
 
+# GStreamer encoder backend
+if(${SUNSHINE_ENABLE_GST})
+    pkg_check_modules(GST gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0 IMPORTED_TARGET QUIET)
+endif()
+if(GST_FOUND)
+    add_compile_definitions(SUNSHINE_BUILD_GST)
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/gst_encoder.h"
+            "${CMAKE_SOURCE_DIR}/src/gst_encoder.cpp")
+    if(TARGET PkgConfig::GST)
+        list(APPEND SUNSHINE_EXTERNAL_LIBRARIES PkgConfig::GST)
+    else()
+        list(APPEND PLATFORM_LIBRARIES ${GST_LIBRARIES})
+        include_directories(SYSTEM ${GST_INCLUDE_DIRS})
+    endif()
+endif()
+
 list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/publish.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/graphics.h"

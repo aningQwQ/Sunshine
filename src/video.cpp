@@ -31,6 +31,10 @@ extern "C" {
 #include "sync.h"
 #include "video.h"
 
+#ifdef SUNSHINE_BUILD_GST
+#include "gst_encoder.h"
+#endif
+
 #ifdef _WIN32
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
@@ -1611,6 +1615,11 @@ namespace video {
     } else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
       return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
     }
+#ifdef SUNSHINE_BUILD_GST
+    else if (auto gst_session = dynamic_cast<gst_encode_session_t *>(&session)) {
+      return gst_session->encode_frame(frame_nr, packets, channel_data, frame_timestamp);
+    }
+#endif
 
     return -1;
   }
@@ -2016,6 +2025,16 @@ namespace video {
   }
 
   std::unique_ptr<encode_session_t> make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device) {
+#ifdef SUNSHINE_BUILD_GST
+    if (dynamic_cast<const encoder_platform_formats_gst *>(encoder.platform_formats.get())) {
+      auto session = make_gst_encode_session(encoder, config);
+      if (session) {
+        return session;
+      }
+      BOOST_LOG(error) << "GStreamer: failed to create encode session for [" << encoder.name << "]";
+      return nullptr;
+    }
+#endif
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
       return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device));
@@ -2227,6 +2246,7 @@ namespace video {
       result = disp.make_nvenc_encode_device(pix_fmt);
     }
 
+    // GStreamer and other non-avcodec encoders don't need a device
     if (result) {
       result->colorspace = colorspace;
     }
@@ -2646,6 +2666,29 @@ namespace video {
 
     // If the encoder isn't supported at all (not even H.264), bail early
     reset_display(disp, encoder.platform_formats->dev_type, output_name, config_autoselect);
+
+#ifdef SUNSHINE_BUILD_GST
+    if (dynamic_cast<const encoder_platform_formats_gst *>(encoder.platform_formats.get())) {
+      if (!disp) {
+        return false;
+      }
+      int gst_valid = -1;
+      if (auto &ci = encoder.codec_from_config(config_autoselect); !ci.name.empty()) {
+        auto session = make_gst_encode_session(encoder, config_autoselect);
+        if (session) {
+          gst_valid = 0;
+        }
+      }
+
+      encoder.h264[encoder_t::PASSED] = gst_valid >= 0;
+      encoder.hevc[encoder_t::PASSED] = (active_hevc_mode >= 2 || !(encoder.flags & H264_ONLY)) && gst_valid >= 0;
+      encoder.av1[encoder_t::PASSED] = (active_av1_mode >= 2 || !(encoder.flags & H264_ONLY)) && gst_valid >= 0;
+
+      fg.disable();
+      return gst_valid >= 0;
+    }
+#endif
+
     if (!disp) {
       return false;
     }
@@ -2833,6 +2876,28 @@ namespace video {
     }
 
     auto encoder_list = encoders;
+
+#ifdef SUNSHINE_BUILD_GST
+    // Register GStreamer encoders and add them to the candidate list
+    auto gst_ptrs = register_gst_encoders();
+    encoder_list.insert(encoder_list.end(), gst_ptrs.begin(), gst_ptrs.end());
+    BOOST_LOG(info) << "Probing " << gst_ptrs.size() << " GStreamer encoder(s)";
+
+    // If user specified a GStreamer encoder, try it first
+    if (!config::video.encoder.empty()) {
+      for (auto *gst_enc : gst_ptrs) {
+        if (gst_enc->name == config::video.encoder) {
+          // Move it to the front of the list
+          auto it = std::find(encoder_list.begin(), encoder_list.end(), gst_enc);
+          if (it != encoder_list.end()) {
+            encoder_list.erase(it);
+            encoder_list.insert(encoder_list.begin(), gst_enc);
+          }
+          break;
+        }
+      }
+    }
+#endif
 
     // If we already have a good encoder, check to see if another probe is required
     if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {

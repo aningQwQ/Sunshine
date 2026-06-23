@@ -238,6 +238,10 @@ namespace video {
   extern encoder_t vaapi;
 #endif
 
+#ifdef SUNSHINE_BUILD_GST
+  extern std::vector<encoder_t *> register_gst_encoders();
+#endif
+
 #ifdef __APPLE__
   extern encoder_t videotoolbox;
 #endif
