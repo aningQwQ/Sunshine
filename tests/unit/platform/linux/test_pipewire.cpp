@@ -283,4 +283,10 @@ TEST_F(PipeWireDisplayTest, TeardownAfterFailedConnectionClosesStreamFd) {
   // pw_context_connect_fd() fails and does not take the stream fd over.
   expect_failed_init_closes_stream_fd("context.properties = { }\ncontext.modules = [ ]\n");
 }
+
+TEST(PipeWireVaapiTest, UsesSystemMemoryConversionPath) {
+  // The stream can negotiate memory buffers even when EGL reports DMA-BUF import support. Those frames
+  // cannot be imported as DMA-BUF, so VAAPI must convert through system memory instead.
+  EXPECT_FALSE(VAAPI_USE_VRAM_PATH);
+}
 #endif

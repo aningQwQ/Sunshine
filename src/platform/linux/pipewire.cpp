@@ -51,6 +51,16 @@ namespace {
   constexpr int MAX_PARAMS = 200;
   constexpr int MAX_DMABUF_FORMATS = 200;
   constexpr int MAX_DMABUF_MODIFIERS = 200;
+
+  /**
+   * @brief Whether the VAAPI encoder converts captured frames through DMA-BUF.
+   *
+   * The PipeWire stream can negotiate memory buffers even when the local EGL
+   * implementation reports DMA-BUF import support. Importing such frames as
+   * DMA-BUF fails with EGL_BAD_PARAMETER for every captured frame, so VAAPI
+   * always converts through system memory instead of the GPU path.
+   */
+  constexpr bool VAAPI_USE_VRAM_PATH = false;
 }  // namespace
 
 using namespace std::literals;
@@ -1287,7 +1297,7 @@ namespace pipewire {
     std::unique_ptr<platf::avcodec_encode_device_t> make_avcodec_encode_device(platf::pix_fmt_e pix_fmt) override {
 #ifdef SUNSHINE_BUILD_VAAPI
       if (mem_type == platf::mem_type_e::vaapi) {
-        return va::make_avcodec_encode_device(width, height, n_dmabuf_infos > 0);
+        return va::make_avcodec_encode_device(width, height, VAAPI_USE_VRAM_PATH);
       }
 #endif
 
