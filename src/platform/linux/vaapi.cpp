@@ -26,6 +26,7 @@ extern "C" {
 #include "src/platform/common.h"
 #include "src/utility.h"
 #include "src/video.h"
+#include "vaapi.h"
 
 using namespace std::literals;
 
