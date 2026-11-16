@@ -548,6 +548,9 @@ namespace va {
         auto rgb_opt = egl::import_source(display.get(), descriptor.sd);
 
         if (!rgb_opt) {
+          // Do not fail every frame: remember that DMA-BUF frames cannot be
+          // imported, so the next stream negotiation falls back to memory buffers.
+          dmabuf_import_failed.store(true);
           return -1;
         }
 

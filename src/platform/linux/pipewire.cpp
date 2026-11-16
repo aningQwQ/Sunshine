@@ -53,14 +53,19 @@ namespace {
   constexpr int MAX_DMABUF_MODIFIERS = 200;
 
   /**
-   * @brief Whether the VAAPI encoder converts captured frames through DMA-BUF.
+   * @brief Select the preferred DRM modifier for an announced DMA-BUF format.
    *
-   * The PipeWire stream can negotiate memory buffers even when the local EGL
-   * implementation reports DMA-BUF import support. Importing such frames as
-   * DMA-BUF fails with EGL_BAD_PARAMETER for every captured frame, so VAAPI
-   * always converts through system memory instead of the GPU path.
+   * Formats that only support implicit modifiers report an empty modifier list.
+   * Announcing an implicit modifier keeps the modifier property present, which
+   * compositors require before they offer DMA-BUF buffers at all.
+   *
+   * @param modifiers Reported modifier list, may be null when empty.
+   * @param n_modifiers Number of reported modifiers.
+   * @return The first reported modifier, or DRM_FORMAT_MOD_INVALID when none are reported.
    */
-  constexpr bool VAAPI_USE_VRAM_PATH = false;
+  constexpr uint64_t preferred_dmabuf_modifier(const uint64_t *modifiers, int n_modifiers) {
+    return n_modifiers > 0 ? modifiers[0] : DRM_FORMAT_MOD_INVALID;
+  }
 }  // namespace
 
 using namespace std::literals;
@@ -93,6 +98,7 @@ namespace pipewire {
     std::atomic<int> color_primaries {0};  ///< PipeWire color-primaries metadata for the stream.
     std::atomic<int> transfer_function {0};  ///< PipeWire transfer-function metadata for the stream.
     std::atomic<bool> stream_dead {false};  ///< Whether the PipeWire stream has been destroyed.
+    std::atomic<bool> negotiated_dmabuf {false};  ///< Whether the negotiated stream delivers DMA-BUF frames.
     pw_stream_state previous_state;  ///< Previous PipeWire stream state reported by callbacks.
     pw_stream_state current_state;  ///< Current PipeWire stream state reported by callbacks.
     std::string err_msg;  ///< Last PipeWire error message reported by the stream.
@@ -355,12 +361,14 @@ namespace pipewire {
         // Use DMA-BUF for VAAPI, or for CUDA when the display GPU is NVIDIA (pure NVIDIA system).
         // On hybrid GPU systems (Intel+NVIDIA), DMA-BUFs come from the Intel GPU and cannot
         // be imported into CUDA, so we fall back to memory buffers in that case.
-        bool use_dmabuf = n_dmabuf_infos > 0 && (mem_type == platf::mem_type_e::vaapi ||
+        // Do not ask for DMA-BUF again once VAAPI has proven unable to import it.
+        const bool vaapi_dmabuf = mem_type == platf::mem_type_e::vaapi && !va::dmabuf_import_failed.load();
+        bool use_dmabuf = n_dmabuf_infos > 0 && (vaapi_dmabuf ||
                                                  mem_type == platf::mem_type_e::vulkan ||
                                                  (mem_type == platf::mem_type_e::cuda && display_is_nvidia));
         if (use_dmabuf) {
           for (int i = 0; i < n_dmabuf_infos; i++) {
-            auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, dmabuf_infos[i].format, dmabuf_infos[i].modifiers, dmabuf_infos[i].n_modifiers);
+            auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, dmabuf_infos[i].format, dmabuf_infos[i].modifiers, dmabuf_infos[i].n_modifiers, true);
             params[n_params] = format_param;
             n_params++;
           }
@@ -368,7 +376,7 @@ namespace pipewire {
 
         // Add fallback for memptr
         for (const auto &fmt : format_map) {
-          auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, fmt.pw_format, nullptr, 0);
+          auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, fmt.pw_format, nullptr, 0, false);
           params[n_params] = format_param;
           n_params++;
         }
@@ -728,7 +736,7 @@ namespace pipewire {
     uint64_t object_serial;
     bool negotiate_maxframerate_ = true;
 
-    struct spa_pod *build_format_parameter(struct spa_pod_builder *b, uint32_t width, uint32_t height, AVRational target_framerate, int32_t format, uint64_t *modifiers, int n_modifiers) {
+    struct spa_pod *build_format_parameter(struct spa_pod_builder *b, uint32_t width, uint32_t height, AVRational target_framerate, int32_t format, uint64_t *modifiers, int n_modifiers, bool is_dmabuf) {
       struct spa_pod_frame object_frame;
       struct spa_pod_frame modifier_frame;
       std::array<struct spa_rectangle, 3> sizes;
@@ -761,14 +769,20 @@ namespace pipewire {
         spa_pod_builder_add(b, SPA_FORMAT_VIDEO_transferFunction, SPA_POD_Id(SPA_VIDEO_TRANSFER_SMPTE2084), 0);
       }
 
-      if (n_modifiers) {
+      if (is_dmabuf) {
         spa_pod_builder_prop(b, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY | SPA_POD_PROP_FLAG_DONT_FIXATE);
         spa_pod_builder_push_choice(b, &modifier_frame, SPA_CHOICE_Enum, 0);
 
         // Preferred value, we pick the first modifier be the preferred one
-        spa_pod_builder_long(b, modifiers[0]);
+        spa_pod_builder_long(b, preferred_dmabuf_modifier(modifiers, n_modifiers));
         for (uint32_t i = 0; i < n_modifiers; i++) {
           spa_pod_builder_long(b, modifiers[i]);
+        }
+
+        // An empty modifier list means the format only supports implicit modifiers.
+        // Announce it explicitly, otherwise compositors never offer DMA-BUF buffers.
+        if (n_modifiers == 0) {
+          spa_pod_builder_long(b, DRM_FORMAT_MOD_INVALID);
         }
 
         spa_pod_builder_pop(b, &modifier_frame);
@@ -947,7 +961,12 @@ namespace pipewire {
       d->drm_format = drm_format;
 
       uint32_t buffer_types = 0;
-      if (spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier) != nullptr && d->drm_format) {
+      const bool negotiated_dmabuf = spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier) != nullptr && d->drm_format;
+      if (d->shared) {
+        d->shared->negotiated_dmabuf.store(negotiated_dmabuf);
+      }
+
+      if (negotiated_dmabuf) {
         BOOST_LOG(info) << "[pipewire] using DMA-BUF buffers"sv;
         buffer_types |= 1 << SPA_DATA_DmaBuf;
       } else {
@@ -1297,7 +1316,11 @@ namespace pipewire {
     std::unique_ptr<platf::avcodec_encode_device_t> make_avcodec_encode_device(platf::pix_fmt_e pix_fmt) override {
 #ifdef SUNSHINE_BUILD_VAAPI
       if (mem_type == platf::mem_type_e::vaapi) {
-        return va::make_avcodec_encode_device(width, height, VAAPI_USE_VRAM_PATH);
+        // Follow the negotiated buffer type instead of the locally reported DMA-BUF
+        // capability: the two can disagree, and using the GPU path for memory-buffer
+        // frames fails on every frame.
+        const bool vram = shared_state && shared_state->negotiated_dmabuf.load() && !va::dmabuf_import_failed.load();
+        return va::make_avcodec_encode_device(width, height, vram);
       }
 #endif
 
