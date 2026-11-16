@@ -4,6 +4,9 @@
  */
 #pragma once
 
+// standard includes
+#include <atomic>
+
 // local includes
 #include "misc.h"
 #include "src/platform/common.h"
@@ -13,6 +16,14 @@ namespace egl {
 }
 
 namespace va {
+  /**
+   * @brief Whether importing a captured DMA-BUF frame into VAAPI has already failed.
+   *
+   * Set when the capture stream delivered DMA-BUF frames that could not be
+   * imported. Later stream negotiations then request memory buffers, so the
+   * system-memory conversion path is used instead of failing on every frame.
+   */
+  inline std::atomic<bool> dmabuf_import_failed {false};
   /**
    * Width --> Width of the image
    * Height --> Height of the image

@@ -10,6 +10,7 @@
   #include <array>
   #include <cerrno>
   #include <chrono>
+  #include <cstdint>
   #include <cstdlib>
   #include <filesystem>
   #include <fstream>
@@ -282,5 +283,16 @@ TEST_F(PipeWireDisplayTest, TeardownAfterFailedConnectionClosesStreamFd) {
   // With a client.conf that loads no modules, PipeWire creates the context, but without the native protocol
   // pw_context_connect_fd() fails and does not take the stream fd over.
   expect_failed_init_closes_stream_fd("context.properties = { }\ncontext.modules = [ ]\n");
+}
+
+TEST(PipeWireDmabufModifierTest, PrefersReportedModifier) {
+  const uint64_t modifiers[] = {0x0, 0x1};  // DRM_FORMAT_MOD_LINEAR first
+  EXPECT_EQ(preferred_dmabuf_modifier(modifiers, 2), uint64_t {0x0});
+}
+
+TEST(PipeWireDmabufModifierTest, FallsBackToImplicitModifierWhenListIsEmpty) {
+  // EGL implementations may report no modifiers, which means the format only supports implicit ones.
+  // The implicit modifier still has to be announced, otherwise compositors never offer DMA-BUF buffers.
+  EXPECT_EQ(preferred_dmabuf_modifier(nullptr, 0), static_cast<uint64_t>(DRM_FORMAT_MOD_INVALID));
 }
 #endif
